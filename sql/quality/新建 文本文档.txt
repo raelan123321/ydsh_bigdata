@@ -1,0 +1,76 @@
+use ydsh_ods;
+-- ======================================
+-- 1. ods_user 用户表 质量检查
+-- ======================================
+-- 完整性：手机号空值率
+select count(*) as total,
+sum(case when phone is null or phone='' then 1 else 0 end) as null_cnt
+from ods_user;
+-- 唯一性：user_id主键重复
+select user_id,count(*) c from ods_user group by user_id having count(*)>1;
+-- 有效性：年龄合法范围
+select distinct age from ods_user where age <=0 or age >=120;
+-- 及时性：注册时间格式
+select register_time from ods_user where ! regexp(register_time,'^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}$');
+-- 一致性：无跨表关联字段，本项记录：无关联外键
+
+-- ======================================
+-- 2. ods_product 商品表 质量检查
+-- ======================================
+select count(*) as total,
+sum(case when product_name is null or product_name='' then 1 else 0 end) as null_cnt
+from ods_product;
+select product_id,count(*) c from ods_product group by product_id having count(*)>1;
+select price,stock from ods_product where price<0 or stock<0;
+-- 及时性：无时间字段，备注：本表无时间字段
+select '';
+
+-- ======================================
+-- 3. ods_store 门店表 质量检查
+-- ======================================
+select count(*) as total,
+sum(case when address is null or address='' then 1 else 0 end) as null_cnt
+from ods_store;
+select store_id,count(*) c from ods_store group by store_id having count(*)>1;
+select distinct city from ods_store;
+
+-- ======================================
+-- 4. ods_order 订单表（课件示例表，对齐你截图）
+-- ======================================
+-- 完整性：pay_amount空值率
+select count(*) as total,
+sum(case when pay_amount is null or pay_amount='' then 1 else 0 end) as null_cnt
+from ods_order;
+-- 唯一性：order_id主键重复
+select order_id, count(*) c from ods_order group by order_id having count(*)>1;
+-- 有效性：订单状态合法取值
+select distinct order_status from ods_order;
+-- 及时性：订单时间格式校验
+select order_time from ods_order where ! regexp(order_time,'^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}$');
+-- 一致性：外键user_id、store_id在用户表、门店表是否存在
+select distinct user_id from ods_order where user_id not in (select user_id from ods_user);
+select distinct store_id from ods_order where store_id not in (select store_id from ods_store);
+
+-- ======================================
+-- 5. ods_order_item 订单明细表
+-- ======================================
+select count(*) as total,
+sum(case when product_id is null or product_id='' then 1 else 0 end) as null_cnt
+from ods_order_item;
+select item_id,count(*) c from ods_order_item group by item_id having count(*)>1;
+select buy_num,item_price from ods_order_item where buy_num <=0 or item_price <=0;
+-- 一致性：order_id外键在订单表存在校验
+select distinct order_id from ods_order_item where order_id not in (select order_id from ods_order);
+
+-- ======================================
+-- 6. ods_user_behavior 用户行为表
+-- ======================================
+select count(*) as total,
+sum(case when behavior_type is null or behavior_type='' then 1 else 0 end) as null_cnt
+from ods_user_behavior;
+select behavior_id,count(*) c from ods_user_behavior group by behavior_id having count(*)>1;
+select distinct behavior_type from ods_user_behavior;
+select behavior_time from ods_user_behavior where ! regexp(behavior_time,'^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}$');
+-- 一致性：user_id、product_id外键校验
+select distinct user_id from ods_user_behavior where user_id not in (select user_id from ods_user);
+select distinct product_id from ods_user_behavior where product_id not in (select product_id from ods_product);
