@@ -10,3 +10,7 @@
 *.log
 __pycache__/
 node_modules/
+
+# 本地中间产物与内部文件
+output/
+.workbuddy/
