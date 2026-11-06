@@ -36,6 +36,8 @@ services:
         condition: service_started
     environment:
       SERVICE_NAME: hiveserver2
+    volumes:
+      - "E:/模拟数据:/data/模拟数据:ro"
     ports:
       - "10000:10000"
       - "10002:10002"
