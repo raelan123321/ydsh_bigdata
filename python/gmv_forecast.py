@@ -75,7 +75,7 @@ def build_features(df):
     """t=线性趋势项；sin/cos=周内周期项（比 6 个哑变量更省参数，避免小样本过拟合）"""
     X = pd.DataFrame(index=df.index)
     X["t"] = np.arange(len(df))
-    dow = df["order_date"].dt.dayofweek  # 0=周一
+    dow = df["order_date"].dt.day_of_week  # 0=周一
     X["sin_w"] = np.sin(2 * np.pi * dow / 7)
     X["cos_w"] = np.cos(2 * np.pi * dow / 7)
     X["is_weekend"] = (dow >= 5).astype(int)
@@ -164,7 +164,7 @@ def forecast(df, horizon=7, model="线性回归"):
     last = pd.to_datetime(df["order_date"].max())
     future = pd.DataFrame({"order_date": [last + timedelta(days=i) for i in range(1, horizon + 1)]})
     future["t"] = np.arange(len(df), len(df) + horizon)
-    dow = future["order_date"].dt.dayofweek
+    dow = future["order_date"].dt.day_of_week
     future["sin_w"] = np.sin(2 * np.pi * dow / 7)
     future["cos_w"] = np.cos(2 * np.pi * dow / 7)
     future["is_weekend"] = (dow >= 5).astype(int)

@@ -57,6 +57,10 @@ def load_all(source="hive", csvdir=None):
         import csv
         for k in queries:
             p = os.path.join(csvdir, f"{k}.csv")
+            if not os.path.exists(p):
+                print(f"[WARN] 缺少 {p}，该维度跳过")
+                data[k] = []
+                continue
             with open(p, encoding="utf-8-sig") as f:
                 data[k] = list(csv.DictReader(f))
     else:
@@ -98,17 +102,18 @@ def detect_daily_anomalies(daily):
 
 
 def detect_week_drop(daily):
-    """按周聚合，找环比跌幅超阈值的周"""
+    """按周聚合，找环比跌幅超阈值的周（只比较完整周：7 天都有数据，避免跨年残周误判）"""
     weeks = {}
     for r in daily:
         d = r["order_date"]
         y, m, day = map(int, d.split("-"))
         iso = datetime(y, m, day).isocalendar()
         wk = f"{iso.year}-W{iso.week:02d}"
-        weeks.setdefault(wk, {"gmv": 0.0, "cnt": 0})
+        weeks.setdefault(wk, {"gmv": 0.0, "cnt": 0, "days": 0})
         weeks[wk]["gmv"] += float(r["gmv"])
         weeks[wk]["cnt"] += int(r["order_cnt"])
-    keys = sorted(weeks)
+        weeks[wk]["days"] += 1
+    keys = [k for k in sorted(weeks) if weeks[k]["days"] >= 7]
     out = []
     for prev, cur in zip(keys, keys[1:]):
         a, b = weeks[prev]["gmv"], weeks[cur]["gmv"]
@@ -194,7 +199,24 @@ def attribute_category(category, target_date, baseline_start, baseline_end, nday
 # ----------------------------------------------------------------------
 # 3) 成文
 # ----------------------------------------------------------------------
-def build_report(data, anomalies, stats, week_drops, cat_shifts, cat_meta, attrib):
+def consistency_check(daily, category):
+    """口径一致性校验：明细金额合计 vs 订单实付合计
+    为什么要查：品类分析的金额来自 dwd_order_item（数量*单价*折扣），
+    与订单实付 pay_amount 是两条独立链路，若不勾稽，品类销售额只能用于"结构对比"，
+    不能与 GMV 直接加总或换算占比。
+    """
+    gmv_total = sum(float(r["gmv"]) for r in daily)
+    item_total = sum(float(r["sales"]) for r in category) if category else 0.0
+    ratio = item_total / gmv_total if gmv_total else 0.0
+    return {
+        "gmv_total": round(gmv_total, 2),
+        "item_total": round(item_total, 2),
+        "ratio": round(ratio, 2),
+        "aligned": 0.9 <= ratio <= 1.1,
+    }
+
+
+def build_report(data, anomalies, stats, week_drops, cat_shifts, cat_meta, attrib, consistency=None):
     daily = data["daily"]
     total_gmv = sum(float(r["gmv"]) for r in daily)
     total_cnt = sum(int(r["order_cnt"]) for r in daily)
@@ -211,7 +233,15 @@ def build_report(data, anomalies, stats, week_drops, cat_shifts, cat_meta, attri
     lines.append(f"- 累计订单量：**{total_cnt:,} 单**，日均 {total_cnt/len(daily):.0f} 单")
     lines.append(f"- 日均客单价：**{total_gmv/total_cnt:,.2f} 元**")
     lines.append(f"- 日 GMV 标准差 {stats['std']:,.2f} 元，波动系数（CV）{stats['std']/stats['mean']*100:.1f}%")
-    lines.append(f"- 覆盖下单用户：{len({r['user_cnt'] for r in daily})} 种日活规模，峰值 {max(int(r['user_cnt']) for r in daily)} 人/日")
+    lines.append(f"- 日下单用户数区间 {min(int(r['user_cnt']) for r in daily)} ~ {max(int(r['user_cnt']) for r in daily)} 人/日")
+    if consistency:
+        flag = "✅ 勾稽一致" if consistency["aligned"] else "⚠️ 不勾稽"
+        lines.append(f"- 口径一致性校验：明细金额合计 {consistency['item_total']:,.2f} 元 vs 订单实付合计 "
+                     f"{consistency['gmv_total']:,.2f} 元，比值 **{consistency['ratio']}×** —— {flag}")
+        if not consistency["aligned"]:
+            lines.append("  - 含义：`dwd_order_item` 的 `quantity*unit_price*(1-discount)` 与订单表 `pay_amount` 是两条独立生成链路，"
+                         "两者不可加总。**品类/商品类金额指标只能做结构占比与趋势对比，不能与 GMV 换算**；"
+                         "若需口径统一，应在上游补一条「订单金额 = 明细金额之和」的勾稽校验规则。")
     lines.append("")
 
     lines.append("## 二、异常检测结果")
@@ -233,7 +263,7 @@ def build_report(data, anomalies, stats, week_drops, cat_shifts, cat_meta, attri
 
     lines.append("## 三、归因分析")
     lines.append("")
-    if attrib and attrib.get("target"):
+    if attrib and attrib.get("target_date"):
         a = attrib
         lines.append(f"**目标日 {a['target_date']}，基准为前 7 天日均。**")
         lines.append("")
@@ -247,6 +277,8 @@ def build_report(data, anomalies, stats, week_drops, cat_shifts, cat_meta, attri
             lines.append(f"| {r['channel']} | {r['target']:,.0f} | {r['baseline']:,.0f} | {r['diff']:+,.0f} | {r['contribution_pct']:+.1f}% |")
         lines.append("")
         lines.append("### 品类贡献拆解")
+        lines.append("")
+        lines.append("> 口径提示：本表金额来自订单明细（数量×单价×折扣），与订单实付口径不同，**只看贡献结构，不与上方 GMV 绝对值对比**。")
         lines.append("")
         lines.append("| 品类 | 当日销售额 | 基准日均 | 差额 | 贡献占比 |")
         lines.append("|---|---|---|---|---|")
@@ -342,7 +374,8 @@ def main():
                 "category": attribute_category(data["category"], target, base_dates[0], base_dates[-1]),
             }
 
-    report = build_report(data, anomalies, stats, week_drops, cat_shifts, cat_meta, attrib)
+    consistency = consistency_check(daily, data["category"])
+    report = build_report(data, anomalies, stats, week_drops, cat_shifts, cat_meta, attrib, consistency)
     if not a.no_llm:
         summary = llm_polish(report)
         if summary:
