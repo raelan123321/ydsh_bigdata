@@ -1,0 +1,17 @@
+﻿tbl,cnt
+dwd.dim_user,1000
+dwd.dim_product,600
+dwd.dim_store,60
+dwd.dwd_order_norm,15000
+dwd.dwd_order_item,35695
+dws.dws_sales_day,366
+dws.dws_sales_week,53
+dws.dws_sales_month,12
+dws.dws_category_day,2923
+dws.dws_store_day,7508
+dws.dws_channel_day,1461
+ads.ads_sales_daily,366
+ads.ads_category_top10,8
+ads.ads_user_value,1000
+ads.ads_kpi_summary,5
+ads.ads_kpi_month,12
