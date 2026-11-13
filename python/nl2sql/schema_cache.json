@@ -1,21 +1,21 @@
 {
-  "source": "fallback",
+  "source": "hive",
   "schema": {
     "dwd.dim_user": "user_id string, user_name string, gender string, age int, city string, province string, member_level string",
     "dwd.dim_product": "product_id string, product_name string, category string, sub_category string, brand string, price double",
-    "dwd.dim_store": "store_id string, store_name string, province string, city string, district string, address string, open_date string, area int, manager string",
-    "dwd.dwd_order_norm": "order_id string, user_id string, store_id string, order_timestamp string, pay_amount double, discount_amount double, raw_status string, order_status string, raw_channel string, channel string, order_date string",
-    "dwd.dwd_order_item": "item_id string, order_id string, product_id string, quantity int, unit_price double, discount double, item_amount double, order_date string",
-    "dws.dws_sales_day": "order_date string, order_cnt bigint, gmv double, aov double, user_cnt bigint, avg_discount double",
-    "dws.dws_sales_week": "week_start string, year_week string, order_cnt bigint, gmv double, user_cnt bigint",
-    "dws.dws_sales_month": "month string, order_cnt bigint, gmv double, aov double, user_cnt bigint",
-    "dws.dws_category_day": "order_date string, category string, sales double, qty bigint, order_cnt bigint",
+    "dwd.dim_store": "store_id string -- 门店ID, store_name string -- 门店名称, province string -- 省份, city string -- 城市, district string -- 区县, address string -- 详细地址, open_date string -- 开业日期, area int -- 营业面积(㎡), manager string -- 店长",
+    "dwd.dwd_order_norm": "order_id string, user_id string, store_id string, order_timestamp string, pay_amount double, discount_amount double, raw_status string -- 源系统原始状态, order_status string -- 标准化状态, raw_channel string -- 源系统原始渠道, channel string -- 标准化渠道, order_date string",
+    "dwd.dwd_order_item": "item_id string -- 明细ID, order_id string -- 订单ID, product_id string -- 商品ID, quantity int -- 数量, unit_price double -- 单价, discount double -- 折扣率, item_amount double -- 明细金额, order_date string -- 订单日期(冗余,便于按天汇总)",
+    "dws.dws_sales_day": "order_date string -- 订单日期, order_cnt bigint -- 有效订单量, gmv double -- 成交总额, aov double -- 客单价, user_cnt bigint -- 下单用户数, avg_discount double -- 平均优惠金额",
+    "dws.dws_sales_week": "week_start string -- 周一日期, year_week string -- 年-周, order_cnt bigint, gmv double, user_cnt bigint",
+    "dws.dws_sales_month": "month string -- yyyy-MM, order_cnt bigint, gmv double, aov double, user_cnt bigint",
+    "dws.dws_category_day": "order_date string -- 订单日期, category string -- 商品大类, sales double -- 品类销售额, qty bigint -- 销售件数, order_cnt bigint -- 涉及订单数",
     "dws.dws_store_day": "order_date string, store_id string, store_name string, province string, city string, sales double, order_cnt bigint, user_cnt bigint",
     "dws.dws_channel_day": "order_date string, channel string, sales double, order_cnt bigint, user_cnt bigint",
-    "ads.ads_sales_daily": "order_date string, gmv double, order_cnt bigint, aov double, user_cnt bigint, dod_rate double, gmv_ma7 double",
-    "ads.ads_category_top10": "rk int, category string, sales double, qty bigint, order_cnt bigint, sales_share double, cum_share double",
-    "ads.ads_user_value": "user_id string, last_order_date string, recency_days int, frequency bigint, monetary double, r_score int, f_score int, m_score int, rfm_score int, segment string",
-    "ads.ads_kpi_summary": "kpi_name string, kpi_value double, kpi_unit string, calc_desc string, stat_scope string, calc_time string",
-    "ads.ads_kpi_month": "month string, gmv double, order_cnt bigint, aov double, user_cnt bigint, repurchase_rate double"
+    "ads.ads_sales_daily": "order_date string -- 日期, gmv double -- GMV, order_cnt bigint -- 订单量, aov double -- 客单价, user_cnt bigint -- 下单用户数, dod_rate double -- GMV 日环比(%), gmv_ma7 double -- GMV 7日移动平均",
+    "ads.ads_category_top10": "rk int -- 排名, category string -- 商品大类, sales double -- 销售额, qty bigint -- 销售件数, order_cnt bigint -- 订单数, sales_share double -- 销售额占比(%), cum_share double -- 累计占比(%)",
+    "ads.ads_user_value": "user_id string, last_order_date string -- 最近下单日期, recency_days int -- R: 距今天数, frequency bigint -- F: 有效订单数, monetary double -- M: 累计消费, r_score int, f_score int, m_score int, rfm_score int -- RFM 综合分, segment string -- 价值分层",
+    "ads.ads_kpi_summary": "kpi_name string -- 指标名称, kpi_value double -- 指标值, kpi_unit string -- 单位, calc_desc string -- 计算口径说明, stat_scope string -- 统计范围, calc_time string -- 计算时间",
+    "ads.ads_kpi_month": "month string, gmv double, order_cnt bigint, aov double, user_cnt bigint, repurchase_rate double -- 当月复购率(%)"
   }
 }

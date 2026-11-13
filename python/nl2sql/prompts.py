@@ -23,7 +23,7 @@ SYSTEM_PROMPT = """你是「云购生活」新零售数仓的 SQL 助手，负�
 4. 若必须查明细表 dwd.dwd_order_norm，必须加过滤条件 order_status in ('已完成','已支付') 且 pay_amount is not null。
 5. 品类、门店、用户维度信息一律通过 join 维度表获取，不要臆造字段。
 6. 涉及明细列表的查询加 limit 200；聚合查询不需要 limit。
-7. 字段别名用中文，方便业务方直接看结果。
+7. 字段别名用英文小写（如 gmv、sales、order_cnt）。Hive 3.1 对未加反引号的中文别名会直接解析失败，确需中文别名时必须用反引号包裹（如 `销售额`）。
 8. 日期字段是字符串 'yyyy-MM-dd'，比较时用字符串字面量（如 order_date between '2024-07-01' and '2024-07-31'），
    月份用 substr(order_date,1,7) = '2024-07'。
 9. 拿不准字段时，选择最接近的已有字段，不要编造列名。
@@ -36,7 +36,7 @@ FEW_SHOT = [
     {
         "q": "2024 年 7 月的 GMV 是多少？",
         "a": """```sql
-select round(sum(gmv), 2) as 七月GMV
+select round(sum(gmv), 2) as gmv_july
 from dws.dws_sales_day
 where order_date between '2024-07-01' and '2024-07-31'
 ```""",
@@ -44,26 +44,26 @@ where order_date between '2024-07-01' and '2024-07-31'
     {
         "q": "销售额最高的 5 个品类",
         "a": """```sql
-select category as 品类, round(sum(sales), 2) as 销售额
+select category, round(sum(sales), 2) as sales
 from dws.dws_category_day
 group by category
-order by 销售额 desc
+order by sales desc
 limit 5
 ```""",
     },
     {
         "q": "各省份的销售额排名",
         "a": """```sql
-select province as 省份, round(sum(sales), 2) as 销售额, sum(order_cnt) as 订单量
+select province, round(sum(sales), 2) as sales, sum(order_cnt) as order_cnt
 from dws.dws_store_day
 group by province
-order by 销售额 desc
+order by sales desc
 ```""",
     },
     {
         "q": "现在复购率是多少？",
         "a": """```sql
-select kpi_value as 复购率
+select kpi_value as repurchase_rate
 from ads.ads_kpi_summary
 where kpi_name = '复购率'
 ```""",
@@ -71,13 +71,13 @@ where kpi_name = '复购率'
     {
         "q": "去年 12 月每个渠道的销售额占比",
         "a": """```sql
-select channel as 渠道,
-       round(sum(sales), 2) as 销售额,
-       round(sum(sales) / sum(sum(sales)) over () * 100, 2) as 占比
+select channel,
+       round(sum(sales), 2) as sales,
+       round(sum(sales) / sum(sum(sales)) over () * 100, 2) as share_pct
 from dws.dws_channel_day
 where substr(order_date, 1, 7) = '2024-12'
 group by channel
-order by 销售额 desc
+order by sales desc
 ```""",
     },
 ]
@@ -105,32 +105,74 @@ def build_user_prompt(question, schema_text, extra_hint=""):
 # 规则兜底：没有 API Key / 网络不可用时，仍可演示"提问 -> SQL -> 结果"闭环
 # 说明：这不是 NL2SQL 的主体能力，只是演示降级方案，覆盖 10 个典型问句
 # ----------------------------------------------------------------------
-FALLBACK_RULES = [
-    (("复购率",), "select kpi_value as 复购率 from ads.ads_kpi_summary where kpi_name = '复购率'"),
-    (("客单价", "aov", "AOV"), "select kpi_value as 客单价 from ads.ads_kpi_summary where kpi_name = '客单价AOV'"),
-    (("活跃用户", "多少用户"), "select kpi_value as 活跃用户数 from ads.ads_kpi_summary where kpi_name = '活跃用户数'"),
-    (("总gmv", "总 gmv", "全年gmv", "总销售额"), "select kpi_value as GMV from ads.ads_kpi_summary where kpi_name = 'GMV'"),
-    (("品类", "category"), """select category as 品类, round(sum(sales), 2) as 销售额
-from dws.dws_category_day group by category order by 销售额 desc limit 10"""),
-    (("省份", "区域"), """select province as 省份, round(sum(sales), 2) as 销售额
-from dws.dws_store_day group by province order by 销售额 desc"""),
-    (("门店", "store"), """select store_name as 门店, round(sum(sales), 2) as 销售额
-from dws.dws_store_day group by store_name order by 销售额 desc limit 10"""),
-    (("渠道", "channel"), """select channel as 渠道, round(sum(sales), 2) as 销售额
-from dws.dws_channel_day group by channel order by 销售额 desc"""),
-    (("月度趋势", "每月", "按月"), """select month as 月份, round(gmv, 2) as GMV, order_cnt as 订单量
-from dws.dws_sales_month order by month"""),
-    (("用户分层", "rfm", "RFM", "价值分层"), """select segment as 客户分层, count(*) as 人数, round(sum(monetary), 2) as 累计消费
-from ads.ads_user_value group by segment order by 人数 desc"""),
-    (("top10", "Top10", "榜单", "排名"), "select rk as 排名, category as 品类, sales as 销售额, sales_share as 占比 from ads.ads_category_top10 order by rk"),
-]
+import re  # noqa: E402  （仅兜底规则使用）
+
+
+def _month_range(q):
+    m = re.search(r"(\d{4})\s*年\s*(\d{1,2})\s*月", q)
+    if m:
+        return f"{m.group(1)}-{int(m.group(2)):02d}"
+    m = re.search(r"(\d{4})-(\d{2})", q)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}"
+    return None
+
+
+def _topn(q, default=10):
+    m = re.search(r"(\d+)\s*(?:个|名|条)", q)
+    if not m:
+        m = re.search(r"[Tt]op\s*(\d+)", q)
+    return int(m.group(1)) if m else default
 
 
 def fallback_sql(question):
-    """关键词匹配生成 SQL，命中不到返回 None"""
-    low = question.lower()
-    for keywords, sql in FALLBACK_RULES:
-        for k in keywords:
-            if k.lower() in low:
-                return sql
+    """关键词 + 正则兜底：覆盖常见问句形态。
+    注意：所有别名使用英文小写——Hive 3.1 对未加反引号的中文别名会解析失败，
+    这条约束也是 Prompt 里必须写明的规则（实测踩坑）。
+    """
+    q = question.strip()
+    low = q.lower()
+    is_gmv = ("gmv" in low or "销售额" in q or "成交额" in q or "营业额" in q)
+
+    # 指定月份
+    month = _month_range(q)
+    if month and is_gmv:
+        return (f"select round(sum(gmv), 2) as gmv from dws.dws_sales_day "
+                f"where substr(order_date, 1, 7) = '{month}'")
+
+    if "复购率" in q or "复购" in q:
+        return "select kpi_value as repurchase_rate from ads.ads_kpi_summary where kpi_name = '复购率'"
+    if "客单价" in q or "aov" in low:
+        return "select kpi_value as aov from ads.ads_kpi_summary where kpi_name = '客单价AOV'"
+    if "活跃用户" in q or "多少用户" in q:
+        return "select kpi_value as active_users from ads.ads_kpi_summary where kpi_name = '活跃用户数'"
+    if ("全年" in q or "总" in q or "整体" in q) and is_gmv:
+        return "select kpi_value as gmv from ads.ads_kpi_summary where kpi_name = 'GMV'"
+
+    if "重要价值" in q or "分层" in q or "rfm" in low:
+        if "重要价值" in q:
+            return "select count(*) as user_cnt from ads.ads_user_value where segment = '重要价值客户'"
+        return ("select segment, count(*) as user_cnt, round(sum(monetary), 2) as amount "
+                "from ads.ads_user_value group by segment order by user_cnt desc")
+
+    if "品类" in q or "category" in low:
+        n = _topn(q, 10)
+        return (f"select category, round(sum(sales), 2) as sales from dws.dws_category_day "
+                f"group by category order by sales desc limit {n}")
+    if "省份" in q or "省" in q or "区域" in q:
+        n = 1 if ("第一" in q or "最高" in q or "最大" in q) else 200
+        return (f"select province, round(sum(sales), 2) as sales from dws.dws_store_day "
+                f"group by province order by sales desc limit {n}")
+    if "门店" in q or "store" in low:
+        n = _topn(q, 10)
+        return (f"select store_name, round(sum(sales), 2) as sales from dws.dws_store_day "
+                f"group by store_name order by sales desc limit {n}")
+    if "渠道" in q or "channel" in low:
+        return ("select channel, round(sum(sales), 2) as sales from dws.dws_channel_day "
+                "group by channel order by sales desc")
+    if "月" in q and ("趋势" in q or "每月" in q or "按月" in q):
+        return ("select month, round(gmv, 2) as gmv, order_cnt from dws.dws_sales_month "
+                "order by month")
+    if "榜单" in q or "排名" in q or "top" in low:
+        return ("select rk, category, sales, sales_share from ads.ads_category_top10 order by rk")
     return None
