@@ -1,0 +1,10 @@
+pandas>=2.2
+numpy>=1.26
+pyhive>=0.7.0
+thrift>=0.16
+openai>=1.40
+python-dotenv>=1.0
+langchain-core>=0.3
+langchain-openai>=0.2
+# 可选：装了会自动参与模型对比
+# xgboost>=2.0
