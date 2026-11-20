@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>云购生活 · 经营数据大屏</title>
+<script src="echarts.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; background: #060b1f; overflow: hidden;
+    font-family: "Microsoft YaHei", "PingFang SC", sans-serif; }
+  #viewport { width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; }
+  #screen { width: 1920px; height: 1080px; transform-origin: center center;
+    background: radial-gradient(ellipse at 50% -10%, #14275a 0%, #060b1f 55%); position: relative; }
+
+  /* ---------- 顶部标题栏 ---------- */
+  .header { height: 76px; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 36px; position: relative; }
+  .header::after { content: ""; position: absolute; left: 36px; right: 36px; bottom: 0; height: 2px;
+    background: linear-gradient(90deg, transparent, #00e5ff 30%, #7c4dff 70%, transparent); opacity: .8; }
+  .header .side { width: 320px; color: #6f8bbf; font-size: 16px; letter-spacing: 1px; }
+  .header .side.right { text-align: right; }
+  .title { font-size: 34px; font-weight: 700; letter-spacing: 6px;
+    background: linear-gradient(180deg, #ffffff 20%, #6fd6ff 90%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    text-shadow: 0 0 24px rgba(0,229,255,.35); }
+  .title .accent { color: #00e5ff; -webkit-text-fill-color: #00e5ff; }
+
+  /* ---------- KPI 卡片行 ---------- */
+  .kpi-row { height: 118px; display: flex; gap: 18px; padding: 14px 36px 6px; }
+  .kpi-card { flex: 1; border: 1px solid rgba(0,229,255,.22); border-radius: 10px;
+    background: linear-gradient(160deg, rgba(0,229,255,.08), rgba(124,77,255,.06));
+    display: flex; flex-direction: column; justify-content: center; padding-left: 26px; position: relative; }
+  .kpi-card::before { content: ""; position: absolute; left: 0; top: 14px; bottom: 14px; width: 3px;
+    background: linear-gradient(180deg, #00e5ff, #7c4dff); border-radius: 2px; }
+  .kpi-card .label { color: #7fa3d9; font-size: 16px; margin-bottom: 8px; letter-spacing: 2px; }
+  .kpi-card .value { color: #eaf6ff; font-size: 32px; font-weight: 700; font-family: Consolas, monospace; }
+  .kpi-card .value .unit { font-size: 15px; color: #6f8bbf; font-weight: 400; margin-left: 6px; }
+  .kpi-card:nth-child(1) .value { color: #ffd54f; }
+
+  /* ---------- 主体三列 ---------- */
+  .main { display: flex; gap: 18px; padding: 10px 36px 20px; height: 866px; }
+  .col { display: flex; flex-direction: column; gap: 18px; }
+  .col.left, .col.right { width: 520px; }
+  .col.mid { flex: 1; }
+  .panel { flex: 1; border: 1px solid rgba(0,229,255,.16); border-radius: 10px;
+    background: rgba(10, 20, 48, .55); display: flex; flex-direction: column; overflow: hidden; }
+  .panel .p-head { height: 42px; display: flex; align-items: center; padding: 0 18px; gap: 10px; }
+  .panel .p-head .bar { width: 4px; height: 16px; background: #00e5ff; border-radius: 2px;
+    box-shadow: 0 0 8px #00e5ff; }
+  .panel .p-head span { color: #cfe6ff; font-size: 18px; font-weight: 600; letter-spacing: 2px; }
+  .panel .chart { flex: 1; }
+
+  /* ---------- 加载与错误 ---------- */
+  #loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: #060b1f; color: #00e5ff; font-size: 20px; letter-spacing: 4px; z-index: 99; }
+</style>
+</head>
+<body>
+<div id="viewport">
+  <div id="screen">
+    <div id="loading">数 据 加 载 中 …</div>
+
+    <div class="header">
+      <div class="side" id="datetime">--</div>
+      <div class="title">云购生活 · <span class="accent">新零售经营数据大屏</span></div>
+      <div class="side right">数据仓库：Hive ADS 层&nbsp;&nbsp;|&nbsp;&nbsp;周期：2024 全年</div>
+    </div>
+
+    <div class="kpi-row" id="kpiRow"></div>
+
+    <div class="main">
+      <div class="col left">
+        <div class="panel"><div class="p-head"><i class="bar"></i><span>月度 GMV 趋势</span></div>
+          <div class="chart" id="chartTrend"></div></div>
+        <div class="panel"><div class="p-head"><i class="bar"></i><span>品类销售 Top10</span></div>
+          <div class="chart" id="chartCategory"></div></div>
+      </div>
+      <div class="col mid">
+        <div class="panel" style="flex: 0 0 218px;"><div class="p-head"><i class="bar"></i><span>渠道销售占比</span></div>
+          <div class="chart" id="chartChannel"></div></div>
+        <div class="panel"><div class="p-head"><i class="bar"></i><span>区域销售分布</span></div>
+          <div class="chart" id="chartMap"></div></div>
+      </div>
+      <div class="col right">
+        <div class="panel" style="flex: 1.15;"><div class="p-head"><i class="bar"></i><span>时段 × 品类 销售热力</span></div>
+          <div class="chart" id="chartHeat"></div></div>
+        <div class="panel"><div class="p-head"><i class="bar"></i><span>GMV 与订单量相关性</span></div>
+          <div class="chart" id="chartScatter"></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ---------- scale 自适应：1920×1080 设计稿整体缩放 ---------- */
+const screen = document.getElementById('screen');
+function resize() {
+  const scale = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+  screen.style.transform = 'scale(' + scale + ')';
+}
+window.addEventListener('resize', resize); resize();
+
+/* ---------- 顶部时钟 ---------- */
+function tick() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  document.getElementById('datetime').textContent =
+    d.getFullYear() + '-' + p(d.getMonth()+1) + '-' + p(d.getDate()) + '  ' +
+    p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+setInterval(tick, 1000); tick();
+
+/* ---------- 公共样式 ---------- */
+const AXIS = { axisLine: { lineStyle: { color: '#2a4a80' } },
+  axisLabel: { color: '#7fa3d9', fontSize: 13 },
+  splitLine: { lineStyle: { color: 'rgba(42,74,128,.35)', type: 'dashed' } } };
+const TIP = { backgroundColor: 'rgba(8,18,44,.92)', borderColor: '#00e5ff',
+  textStyle: { color: '#eaf6ff', fontSize: 14 } };
+
+const fmtWan = v => (v/10000).toFixed(1);
+const shortProv = n => n.replace(/(省|市|自治区|壮族|回族|维吾尔|特别行政区)/g,'')
+                        .replace(/^内蒙古$/,'内蒙古').replace(/^广西$/,'广西');
+
+let charts = {};
+function mk(id, option) {
+  const c = echarts.init(document.getElementById(id));
+  c.setOption(option); charts[id] = c; return c;
+}
+window.addEventListener('resize', () => Object.values(charts).forEach(c => c.resize()));
+
+/* ---------- 拉取数据并渲染 ---------- */
+Promise.all([
+  fetch('/api/all').then(r => r.json()),
+  fetch('/china.json').then(r => r.json())
+]).then(([data, chinaGeo]) => {
+  echarts.registerMap('china', chinaGeo);
+
+  /* KPI 卡片 */
+  const row = document.getElementById('kpiRow');
+  data.kpi.forEach(k => {
+    const v = k.unit === '元' ? Number(k.value).toLocaleString('zh-CN') : k.value;
+    row.insertAdjacentHTML('beforeend',
+      `<div class="kpi-card"><div class="label">${k.name}</div>
+       <div class="value">${v}<span class="unit">${k.unit}</span></div></div>`);
+  });
+
+  /* 1. 折线：月度 GMV 趋势 */
+  mk('chartTrend', {
+    tooltip: Object.assign({ trigger: 'axis' }, TIP),
+    legend: { textStyle: { color: '#7fa3d9' }, top: 6, right: 16 },
+    grid: { left: 70, right: 50, top: 40, bottom: 34 },
+    xAxis: Object.assign({ type: 'category', data: data.month_trend.months }, AXIS),
+    yAxis: [Object.assign({ type: 'value', name: 'GMV(万元)', nameTextStyle: { color: '#7fa3d9' },
+      axisLabel: { color: '#7fa3d9', formatter: v => fmtWan(v) } }, AXIS),
+      Object.assign({ type: 'value', name: '订单量', nameTextStyle: { color: '#7fa3d9' } }, AXIS)],
+    series: [
+      { name: 'GMV(万元)', type: 'line', smooth: true, data: data.month_trend.gmv.map(fmtWan),
+        lineStyle: { width: 3, color: '#00e5ff' }, itemStyle: { color: '#00e5ff' },
+        areaStyle: { color: new echarts.graphic.LinearGradient(0,0,0,1,[
+          { offset: 0, color: 'rgba(0,229,255,.35)' }, { offset: 1, color: 'rgba(0,229,255,0)' }]) },
+        symbolSize: 8 },
+      { name: '订单量', type: 'line', yAxisIndex: 1, smooth: true, data: data.month_trend.order_cnt,
+        lineStyle: { width: 2, type: 'dashed', color: '#b388ff' }, itemStyle: { color: '#b388ff' }, symbolSize: 6 }
+    ]
+  });
+
+  /* 2. 柱状：品类 Top10（渐变 + 排序） */
+  const cats = data.category.categories.slice().reverse();
+  const sales = data.category.sales.slice().reverse().map(fmtWan);
+  mk('chartCategory', {
+    tooltip: Object.assign({ trigger: 'axis', axisPointer: { type: 'shadow' },
+      valueFormatter: v => v + ' 万元' }, TIP),
+    grid: { left: 96, right: 60, top: 14, bottom: 30 },
+    xAxis: Object.assign({ type: 'value', axisLabel: { color: '#7fa3d9', formatter: v => fmtWan(v*1) + '' } }, AXIS),
+    yAxis: Object.assign({ type: 'category', data: cats,
+      axisLabel: { color: '#cfe6ff', fontSize: 13 } }, AXIS),
+    series: [{ type: 'bar', data: sales, barWidth: 14,
+      itemStyle: { borderRadius: 7,
+        color: new echarts.graphic.LinearGradient(1,0,0,0,[
+          { offset: 0, color: '#7c4dff' }, { offset: 1, color: '#00e5ff' }]) },
+      label: { show: true, position: 'right', color: '#6fd6ff', fontSize: 12, formatter: '{c}万' } }]
+  });
+
+  /* 3. 饼图：渠道占比 */
+  mk('chartChannel', {
+    tooltip: Object.assign({ trigger: 'item',
+      formatter: p => p.name + '：' + (p.value/10000).toFixed(1) + ' 万元（' + p.percent + '%）' }, TIP),
+    legend: { orient: 'vertical', right: 30, top: 'center', textStyle: { color: '#cfe6ff', fontSize: 14 },
+      itemWidth: 14, itemHeight: 10 },
+    series: [{ type: 'pie', center: ['36%','54%'], radius: ['42%','72%'],
+      data: data.channel, roseType: 'radius',
+      label: { show: false },
+      itemStyle: { borderColor: '#0a1430', borderWidth: 2 },
+      color: ['#00e5ff','#7c4dff','#ffd54f','#ff7d9c','#4dffdf'] }]
+  });
+
+  /* 4. 地图：区域销售分布 */
+  const mapData = data.region.map(r => ({ name: shortProv(r.name), value: r.value, cnt: r.cnt }));
+  mk('chartMap', {
+    tooltip: Object.assign({ trigger: 'item',
+      formatter: p => p.name ? p.name + '：' + (p.value/10000).toFixed(1) + ' 万元 / ' + (p.data.cnt||0) + ' 单' : p.name }, TIP),
+    visualMap: { min: 0, max: Math.max(...mapData.map(d => d.value)), left: 24, bottom: 24,
+      text: ['高','低'], textStyle: { color: '#7fa3d9' }, inRange: { color: ['#12306b','#2f7bff','#00e5ff','#ffd54f'] } },
+    series: [{ type: 'map', map: 'china', roam: true, data: mapData,
+      emphasis: { label: { color: '#fff' }, itemStyle: { areaColor: '#7c4dff' } },
+      itemStyle: { borderColor: 'rgba(0,229,255,.5)', borderWidth: 1 },
+      select: { disabled: true } }]
+  });
+
+  /* 5. 热力图：时段 × 品类 */
+  const hm = data.heatmap;
+  mk('chartHeat', {
+    tooltip: Object.assign({ position: 'top',
+      formatter: p => hm.categories[p.value[0]] + ' ' + hm.hours[p.value[1]] + '：' +
+        (p.value[2]/10000).toFixed(1) + ' 万元' }, TIP),
+    grid: { left: 88, right: 30, top: 16, bottom: 46 },
+    xAxis: Object.assign({ type: 'category', data: hm.hours, axisLabel: { color: '#7fa3d9', fontSize: 11, interval: 2 } }, AXIS),
+    yAxis: Object.assign({ type: 'category', data: hm.categories, axisLabel: { color: '#cfe6ff', fontSize: 12 } }, AXIS),
+    visualMap: { min: 0, max: Math.max(...hm.data.map(d => d[2])), calculable: true, orient: 'horizontal',
+      left: 'center', bottom: 2, textStyle: { color: '#7fa3d9', fontSize: 11 },
+      inRange: { color: ['#0d2b5e','#1e63c8','#00c2ff','#ffd54f'] }, itemWidth: 14, itemHeight: 90 },
+    series: [{ type: 'heatmap', data: hm.data,
+      label: { show: false },
+      itemStyle: { borderColor: 'rgba(6,11,31,.6)', borderWidth: 1 },
+      emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,229,255,.8)' } } }]
+  });
+
+  /* 6. 散点：GMV 与订单量相关性 */
+  const sc = data.scatter.map(r => [r.order_cnt, Math.round(r.gmv/10000), r.month]);
+  mk('chartScatter', {
+    tooltip: Object.assign({ formatter: p => p.data[2] + '<br>订单量：' + p.data[0] + ' 单<br>GMV：' + p.data[1] + ' 万元<br>客单价：' +
+      Math.round(p.data[1]*10000/p.data[0]) + ' 元' }, TIP),
+    grid: { left: 76, right: 40, top: 34, bottom: 42 },
+    xAxis: Object.assign({ type: 'value', name: '订单量(单)', nameTextStyle: { color: '#7fa3d9' } }, AXIS),
+    yAxis: Object.assign({ type: 'value', name: 'GMV(万元)', nameTextStyle: { color: '#7fa3d9' } }, AXIS),
+    series: [{ type: 'scatter', data: sc, symbolSize: d => Math.sqrt(d[1]) * 3.2,
+      itemStyle: { color: new echarts.graphic.LinearGradient(0,0,1,0,[{offset:0,color:'#00e5ff'},{offset:1,color:'#7c4dff'}]),
+        shadowBlur: 10, shadowColor: 'rgba(0,229,255,.5)' },
+      label: { show: true, formatter: p => p.data[2].slice(5), color: '#6f8bbf', fontSize: 10, position: 'top' } }]
+  });
+
+  document.getElementById('loading').style.display = 'none';
+}).catch(err => {
+  document.getElementById('loading').textContent = '数据加载失败：' + err + '（请确认 screen-api 服务已启动）';
+});
+</script>
+</body>
+</html>
