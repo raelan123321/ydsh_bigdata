@@ -1,0 +1,16 @@
+{
+  "timestamp": "2026-11-20 16:36:25",
+  "http": [
+    {
+      "name": "HTTP GET /api/all",
+      "unit": "ms",
+      "n": 30,
+      "min": 6.8,
+      "p50": 28.5,
+      "p95": 170.3,
+      "max": 171.7,
+      "mean": 69.713,
+      "throughput_rps": 14.3
+    }
+  ]
+}
