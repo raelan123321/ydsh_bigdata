@@ -1,0 +1,11 @@
+streamlit>=1.30
+flask>=3.0
+pandas>=2.0
+# 不带 [hive] extra：extra 里的 sasl 是 C 扩展，改用纯 Python 的 pure-sasl
+pyhive==0.7.0
+thrift>=0.16
+thrift-sasl>=0.4.3
+pure-sasl>=0.6.2
+python-dotenv>=1.0
+pymysql>=1.1
+openai>=1.30
