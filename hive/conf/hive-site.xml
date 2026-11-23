@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+  Hive 自定义配置：保留 apache/hive:3.1.3 镜像默认项（Tez 本地模式、scratch 目录等），
+  追加本项目的四项修改：
+    1) 元数据目录与仓库目录指向命名卷挂载点，容器重建不丢数据
+    2) Derby 库文件放子目录（create=true 要求目标目录不存在，而卷挂载必然先建目录）
+    3) 开启动态分区（ADS/DWD 分区写入需要）
+    4) HS2 绑定全部网卡，否则容器内 localhost 健康检查被拒
+-->
+<configuration>
+  <!-- ===== 镜像默认项（必须保留，否则执行引擎会退回 MR 并报 metrics/Updater 缺失） ===== -->
+  <property>
+    <name>hive.server2.enable.doAs</name>
+    <value>false</value>
+  </property>
+  <property>
+    <name>hive.tez.exec.inplace.progress</name>
+    <value>false</value>
+  </property>
+  <property>
+    <name>hive.exec.scratchdir</name>
+    <value>/opt/hive/scratch_dir</value>
+  </property>
+  <property>
+    <name>hive.user.install.directory</name>
+    <value>/opt/hive/install_dir</value>
+  </property>
+  <property>
+    <name>tez.runtime.optimize.local.fetch</name>
+    <value>true</value>
+  </property>
+  <property>
+    <name>hive.exec.submit.local.task.via.child</name>
+    <value>false</value>
+  </property>
+  <property>
+    <name>mapreduce.framework.name</name>
+    <value>local</value>
+  </property>
+  <property>
+    <name>tez.local.mode</name>
+    <value>true</value>
+  </property>
+  <property>
+    <name>hive.execution.engine</name>
+    <value>tez</value>
+  </property>
+  <property>
+    <name>metastore.warehouse.dir</name>
+    <value>/opt/hive/data/warehouse</value>
+  </property>
+  <property>
+    <name>metastore.metastore.event.db.notification.api.auth</name>
+    <value>false</value>
+  </property>
+
+  <!-- ===== 本项目增补项 ===== -->
+  <property>
+    <name>hive.metastore.warehouse.dir</name>
+    <value>/opt/hive/data/warehouse</value>
+  </property>
+
+  <property>
+    <name>javax.jdo.option.ConnectionURL</name>
+    <value>jdbc:derby:;databaseName=/opt/hive/metastore_db/data;create=true</value>
+  </property>
+  <property>
+    <name>javax.jdo.option.ConnectionDriverName</name>
+    <value>org.apache.derby.jdbc.EmbeddedDriver</value>
+  </property>
+
+  <property>
+    <name>hive.exec.dynamic.partition</name>
+    <value>true</value>
+  </property>
+  <property>
+    <name>hive.exec.dynamic.partition.mode</name>
+    <value>nonstrict</value>
+  </property>
+  <property>
+    <name>hive.exec.max.dynamic.partitions</name>
+    <value>1000</value>
+  </property>
+
+  <property>
+    <name>hive.server2.thrift.port</name>
+    <value>10000</value>
+  </property>
+  <property>
+    <name>hive.server2.thrift.bind.host</name>
+    <value>0.0.0.0</value>
+  </property>
+</configuration>
