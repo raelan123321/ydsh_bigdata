@@ -1,0 +1,148 @@
+services:
+  # ---------- 基础设施：MySQL（metastore 元数据库 + ADS 结果库） ----------
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: metastore_db
+      MYSQL_USER: hive
+      MYSQL_PASSWORD: ${HIVE_DB_PASSWORD:-hive}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-root}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ---------- Hive 数据仓库 ----------
+  hive-metastore:
+    image: w4-hive
+    build: ./hive
+    user: "0:0"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      SERVICE_NAME: metastore
+      HIVE_CUSTOM_CONF_DIR: /opt/hive/conf-custom
+      HIVE_METASTORE_JDBC_URL: jdbc:mysql://mysql:3306/metastore_db?useSSL=false&allowPublicKeyRetrieval=true
+      HIVE_METASTORE_JDBC_DRIVER: com.mysql.cj.jdbc.Driver
+      HIVE_METASTORE_JDBC_USER: hive
+      HIVE_METASTORE_JDBC_PASSWORD: ${HIVE_DB_PASSWORD:-hive}
+    volumes:
+      - ./hive/conf:/opt/hive/conf-custom:ro
+      - hive_metastore:/opt/hive/metastore_db
+      - hive_warehouse:/opt/hive/data/warehouse
+      - hive_warehouse_legacy:/opt/hive/warehouse
+    ports:
+      - "9083:9083"
+
+  hive-server:
+    image: w4-hive
+    build: ./hive
+    user: "0:0"
+    depends_on:
+      hive-metastore:
+        condition: service_started
+    environment:
+      SERVICE_NAME: hiveserver2
+      HIVE_CUSTOM_CONF_DIR: /opt/hive/conf-custom
+    volumes:
+      - ./hive/conf:/opt/hive/conf-custom:ro
+      - hive_warehouse:/opt/hive/data/warehouse
+      - hive_warehouse_legacy:/opt/hive/warehouse
+      - "E:/模拟数据:/data/模拟数据:ro"
+    ports:
+      - "10000:10000"
+      - "10002:10002"
+    healthcheck:
+      test: ["CMD-SHELL", "beeline -u jdbc:hive2://localhost:10000/default -n hive -e 'select 1' || exit 1"]
+      interval: 30s
+      timeout: 60s
+      retries: 20
+      start_period: 150s
+
+  # ---------- Superset BI（自定义镜像：内置 Hive/MySQL 驱动） ----------
+  superset:
+    image: w4-superset
+    build: ./superset
+    environment:
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-please_change_this_secret}
+      SUPERSET_LOAD_EXAMPLES: "no"
+    volumes:
+      - superset_data:/app/superset.db
+    depends_on:
+      mysql:
+        condition: service_healthy
+      hive-server:
+        condition: service_healthy
+    ports:
+      - "8088:8088"
+
+  # ---------- ClickHouse（任务书要求编排的 OLAP 服务） ----------
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    environment:
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse}
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- \"http://default:$${CLICKHOUSE_PASSWORD}@localhost:8123/?query=SELECT%201\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ---------- 大屏数据 API（Flask，提供 JSON 接口 + 静态大屏页面） ----------
+  screen-api:
+    image: w4-app
+    build: ./app
+    command: ["python", "screen_api.py"]
+    environment:
+      FLASK_HOST: 0.0.0.0
+      FLASK_PORT: "8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./python:/opt/project/python:ro
+
+  # ---------- Streamlit 智能问答（NL2SQL 闭环） ----------
+  app:
+    image: w4-app
+    build: ./app
+    command: ["streamlit", "run", "streamlit_app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+    environment:
+      HIVE_HOST: hive-server
+      HIVE_PORT: "10000"
+      HIVE_USER: hive
+      HIVE_DB: dws
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com/v1}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+    depends_on:
+      hive-server:
+        condition: service_healthy
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./python:/opt/project/python:ro
+
+volumes:
+  mysql_data:
+  clickhouse_data:
+  superset_data:
+  hive_metastore:
+  hive_warehouse:
+  hive_warehouse_legacy:
