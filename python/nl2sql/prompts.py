@@ -140,7 +140,23 @@ def fallback_sql(question):
         return (f"select round(sum(gmv), 2) as gmv from dws.dws_sales_day "
                 f"where substr(order_date, 1, 7) = '{month}'")
 
-    if "复购率" in q or "复购" in q:
+    if "复购" in q:
+        # 月度口径：当月有效订单≥2次的用户 / 当月下单用户（dwd 实时计算）
+        if "月" in q or month:
+            where_m = f" and substr(order_date, 1, 7) = '{month}'" if month else ""
+            return (
+                "select m as month_id, "
+                "count(distinct user_id) as act_users, "
+                "count(distinct case when mcnt >= 2 then user_id end) as repeat_users, "
+                "round(count(distinct case when mcnt >= 2 then user_id end) "
+                "/ count(distinct user_id) * 100, 2) as repurchase_rate "
+                "from (select user_id, substr(order_date, 1, 7) as m, count(*) as mcnt "
+                "from dwd.dwd_order_norm "
+                "where order_status in ('已完成', '已支付')" + where_m + " "
+                "group by user_id, substr(order_date, 1, 7)) t "
+                "group by m order by m"
+            )
+        # 全年口径：全年人均约 9.2 单，几乎所有用户复购，故为 100%
         return "select kpi_value as repurchase_rate from ads.ads_kpi_summary where kpi_name = '复购率'"
     if "客单价" in q or "aov" in low:
         return "select kpi_value as aov from ads.ads_kpi_summary where kpi_name = '客单价AOV'"
