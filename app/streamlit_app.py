@@ -165,10 +165,13 @@ def render_chart(df: pd.DataFrame):
 # ----------------------------------------------------------------------
 # 提问处理
 # ----------------------------------------------------------------------
-question = st.session_state.pop("pending", None) or st.text_input(
+_pending = st.session_state.pop("pending", None)
+question = _pending or st.text_input(
     "请输入你的问题，例如：广东省上月销售额是多少？", key="q_input")
 
-if question:
+# 只在「新问题」时执行：页面重跑时输入框残留的旧值不重复查询
+if question and (_pending or question != st.session_state.get("_last_run_q", "")):
+    st.session_state._last_run_q = question
     engine = st.session_state._nl2sql
     if engine is None:
         st.error("NL2SQL 初始化失败：" + st.session_state.get("_init_err", "未知错误")
