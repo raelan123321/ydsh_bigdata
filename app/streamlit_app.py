@@ -55,11 +55,13 @@ st.caption("NL2SQL 闭环：自然语言 → SQL → Hive 执行 → 图表渲�
 # ----------------------------------------------------------------------
 if "history" not in st.session_state:
     st.session_state.history = []   # [(question, sql, df_or_None, error_or_None, chart_type)]
-if "_nl2sql" not in st.session_state:
+if "_nl2sql" not in st.session_state or st.session_state._nl2sql is None:
+    # 初始化失败不永久缓存：Hive 就绪后页面重跑会自动重试
+    st.session_state._nl2sql = None
+    st.session_state._init_err = ""
     try:
         st.session_state._nl2sql = NL2SQL(offline=True) if NL2SQL else None
     except Exception as e:  # Hive 未启动时也能进界面
-        st.session_state._nl2sql = None
         st.session_state._init_err = str(e)
 
 EXAMPLES = [
