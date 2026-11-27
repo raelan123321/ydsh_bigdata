@@ -3,10 +3,12 @@
 接入第 3 周 NL2SQL 后端，实现闭环：
   提问 → 生成 SQL（LLM / 规则兜底）→ 安全校验 → Hive 执行 → 结果展示 → ECharts 图表渲染
 交互增强：历史对话侧栏、加载状态（spinner）、错误提示、示例问题、自动图表推荐
+预测增强：任意 horizon 的 GMV 预测问答（"预测未来1天/8天/30天GMV"），实时调用 gmv_forecast 模型
 运行：streamlit run streamlit_app.py --server.port=8501
 """
 import json
 import os
+import re
 import sys
 
 import pandas as pd
@@ -71,16 +73,32 @@ EXAMPLES = [
     "月度复购率",
     "各区域销售额排名",
     "未来7天GMV预测",
+    "预测未来30天GMV",
 ]
 
 # ----------------------------------------------------------------------
-# GMV 预测问答：命中预测意图时，直接读取第 3 周预测产物（output/forecast/）
+# GMV 预测问答：命中预测意图时，按问句中的天数实时调用 gmv_forecast 模型
+#   · "未来7天GMV预测"          → 读取第 3 周落盘产物（output/forecast/forecast_day.csv）
+#   · "预测未来1天/8天/30天GMV" → 用同一套模型（按 MAE 选优）实时外推任意 horizon
 # 数据源 dws.dws_sales_day，与报表/问答口径同源（对应答辩 PPT 第 10 页）
 # ----------------------------------------------------------------------
 FORECAST_DIRS = (
     os.path.join(_HERE, "..", "output", "forecast"),
     "/opt/project/output/forecast",
 )
+
+_NUM2WORD = {"一周": 7, "下周": 7, "半个月": 15, "半月": 15, "一个月": 30, "次月": 30,
+             "一季度": 90, "半年": 180, "一年": 365, "全年": 365}
+
+
+def _parse_horizon(q: str) -> int:
+    """从问句解析预测天数：'8天'/'未来30天' 直接取数字；'一周/一个月'等中文映射；默认 7 天，上限 365"""
+    m = re.search(r"(\d+)\s*天", q) or re.search(r"(\d+)\s*日", q)
+    if m:
+        n = int(m.group(1))
+    else:
+        n = next((v for k, v in _NUM2WORD.items() if k in q), 7)
+    return max(1, min(n, 365))
 
 
 def _forecast_dir():
@@ -97,23 +115,59 @@ def is_forecast_question(q: str) -> bool:
     return "未来" in q and any(k in low for k in ("gmv", "销售额", "成交", "营业额"))
 
 
-def render_forecast(q: str):
-    """渲染 GMV 预测：历史末段 + 未来 7 天预测折线、预测明细表、模型评估表"""
+def _load_forecast_assets():
+    """返回 (7天产物DataFrame或None, 历史序列DataFrame, metrics字典, 目录路径或None)"""
     base = _forecast_dir()
     if not base:
-        st.error("未找到预测结果目录 output/forecast/，请先运行 python/gmv_forecast.py 生成")
-        return None
+        return None, None, {}, None
     try:
-        fday = pd.read_csv(os.path.join(base, "forecast_day.csv"), encoding="utf-8-sig")
+        fpath = os.path.join(base, "forecast_day.csv")
+        fday = pd.read_csv(fpath, encoding="utf-8-sig") if os.path.exists(fpath) else None
         hist = pd.read_csv(os.path.join(base, "series_history_day.csv"), encoding="utf-8-sig")
         mpath = os.path.join(base, "metrics.json")
         metrics = json.load(open(mpath, encoding="utf-8")) if os.path.exists(mpath) else {}
-    except Exception as e:
-        st.error(f"读取预测结果失败：{e}")
+        return fday, hist, metrics, base
+    except Exception:
+        return None, None, {}, base
+
+
+def _forecast_any_horizon(hist: pd.DataFrame, horizon: int, model: str):
+    """复用 python/gmv_forecast.py 的模型，对任意 horizon 实时外推；导入失败时退化为均值外推"""
+    try:
+        sys.path.insert(0, os.path.join(_HERE, "..", "python"))
+        sys.path.insert(0, "/opt/project/python")
+        import gmv_forecast as gf
+        dfm = hist[["order_date", "gmv"]].copy()
+        dfm["order_date"] = pd.to_datetime(dfm["order_date"])
+        fc = gf.forecast(dfm, horizon=horizon, model=model)
+        fc["order_date"] = pd.to_datetime(fc["order_date"]).dt.strftime("%Y-%m-%d")
+        return fc[["order_date", "gmv_pred"]], model
+    except Exception:
+        last = pd.to_datetime(hist["order_date"].max())
+        dates = pd.date_range(last + pd.Timedelta(days=1), periods=horizon).strftime("%Y-%m-%d")
+        level = round(float(hist["gmv"].mean()), 2)
+        return pd.DataFrame({"order_date": dates, "gmv_pred": [level] * horizon}), "均值基线（内置退化）"
+
+
+def render_forecast(q: str):
+    """渲染 GMV 预测：历史末段 + N 天预测折线、预测明细表、模型评估表"""
+    fday7, hist, metrics, base = _load_forecast_assets()
+    if base is None or hist is None:
+        st.error("未找到预测数据目录 output/forecast/，请先运行 python/gmv_forecast.py 生成")
         return None
 
-    fday.columns = ["order_date", "gmv_pred"]
-    hist.columns = ["order_date", "gmv", "order_cnt", "user_cnt"]
+    horizon = _parse_horizon(q)
+    best = metrics.get("best_model", "均值基线")
+
+    # 7 天默认问句 → 直接用落盘产物（与预测报告/PPT 数值一致）；其余 horizon → 实时外推
+    if horizon == 7 and fday7 is not None:
+        fday = fday7.copy()
+        fday.columns = ["order_date", "gmv_pred"]
+        used_model = f"{best}（第 3 周落盘产物）"
+        source_note = "读取 output/forecast/forecast_day.csv"
+    else:
+        fday, used_model = _forecast_any_horizon(hist, horizon, best)
+        source_note = f"实时调用 gmv_forecast.forecast(horizon={horizon})"
 
     # 模型评估表（三模型对比，按 MAE 选优）
     if metrics.get("metrics"):
@@ -121,23 +175,22 @@ def render_forecast(q: str):
         for name, m in metrics["metrics"].items():
             rows.append({"模型": name, "MAE(元)": round(m["MAE"], 2),
                          "RMSE(元)": round(m["RMSE"], 2), "MAPE": f"{m['MAPE(%)']}%"})
-        best = metrics.get("best_model", "均值基线")
         best_mae = metrics["metrics"][best]["MAE"]
         st.markdown("**模型评估（留出验证：最后 14 天）：**")
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
         st.caption(f"按 MAE 选优：{best}（MAE {best_mae:,.2f} 元）——日 GMV 围绕均值宽幅波动、无显著趋势，复杂模型反而拟合噪声")
 
     # 预测明细表
-    st.markdown("**未来 7 天日粒度 GMV 预测：**")
+    st.markdown(f"**未来 {horizon} 天日粒度 GMV 预测（模型：{used_model}）：**")
     show = fday.copy()
-    show["gmv_pred"] = show["gmv_pred"].round(2)
+    show["gmv_pred"] = pd.to_numeric(show["gmv_pred"]).round(2)
     st.dataframe(show, use_container_width=True, hide_index=True)
 
     # 历史末段 + 预测拼接折线（ECharts 双序列，预测段虚线）
     h = hist.tail(30)
     x = h["order_date"].astype(str).tolist() + fday["order_date"].astype(str).tolist()
     y_hist = h["gmv"].round(2).tolist() + [None] * len(fday)
-    y_pred = [None] * (len(h) - 1) + [h["gmv"].iloc[-1].round(2)] + fday["gmv_pred"].round(2).tolist()
+    y_pred = [None] * (len(h) - 1) + [h["gmv"].iloc[-1].round(2)] + pd.to_numeric(fday["gmv_pred"]).round(2).tolist()
     js = _echarts_js()
     if js:
         cid = f"fc_{abs(hash(tuple(x))) % 99999}"
@@ -172,8 +225,8 @@ def render_forecast(q: str):
     else:
         st.line_chart(show.set_index("order_date"))
 
-    st.caption("口径说明：预测数据源为 dws.dws_sales_day（有效订单），GMV 合计与 ADS 层 KPI 逐位一致；"
-               "预测值由 python/gmv_forecast.py 离线产出，问答页读取其结果进行可视化")
+    st.caption(f"口径说明：预测数据源为 dws.dws_sales_day（有效订单），GMV 合计与 ADS 层 KPI 逐位一致；"
+               f"{source_note}；模型实现见 python/gmv_forecast.py")
     return show.rename(columns={"gmv_pred": "预测GMV"})
 
 with st.sidebar:

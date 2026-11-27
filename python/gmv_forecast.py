@@ -184,6 +184,13 @@ def forecast(df, horizon=7, model="线性回归", freq="day"):
         level = df["gmv"].tail(7).mean()
         return pd.DataFrame({"order_date": dates, "gmv_pred": [round(level, 2)] * horizon})
 
+    if model == "均值基线":
+        # 全量均值常数外推：数据无趋势/无周期时，这是 MAE 最优模型的忠实实现
+        last = pd.to_datetime(df["order_date"].max())
+        dates = [last + step * i for i in range(1, horizon + 1)]
+        level = df["gmv"].mean()
+        return pd.DataFrame({"order_date": dates, "gmv_pred": [round(level, 2)] * horizon})
+
     coef = fit_ols(X_all, y)
     last = pd.to_datetime(df["order_date"].max())
     future = pd.DataFrame({"order_date": [last + step * i for i in range(1, horizon + 1)]})
