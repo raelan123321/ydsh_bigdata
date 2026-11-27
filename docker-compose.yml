@@ -144,6 +144,8 @@ services:
       - "8501:8501"
     volumes:
       - ./python:/opt/project/python:ro
+      - ./app:/opt/project/app
+      - ./output:/opt/project/output:ro
 
 volumes:
   mysql_data:

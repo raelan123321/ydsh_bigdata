@@ -70,7 +70,111 @@ EXAMPLES = [
     "销售额最高的10个品类",
     "月度复购率",
     "各区域销售额排名",
+    "未来7天GMV预测",
 ]
+
+# ----------------------------------------------------------------------
+# GMV 预测问答：命中预测意图时，直接读取第 3 周预测产物（output/forecast/）
+# 数据源 dws.dws_sales_day，与报表/问答口径同源（对应答辩 PPT 第 10 页）
+# ----------------------------------------------------------------------
+FORECAST_DIRS = (
+    os.path.join(_HERE, "..", "output", "forecast"),
+    "/opt/project/output/forecast",
+)
+
+
+def _forecast_dir():
+    for d in FORECAST_DIRS:
+        if os.path.isdir(d):
+            return d
+    return None
+
+
+def is_forecast_question(q: str) -> bool:
+    low = q.lower()
+    if "预测" in q or "forecast" in low:
+        return True
+    return "未来" in q and any(k in low for k in ("gmv", "销售额", "成交", "营业额"))
+
+
+def render_forecast(q: str):
+    """渲染 GMV 预测：历史末段 + 未来 7 天预测折线、预测明细表、模型评估表"""
+    base = _forecast_dir()
+    if not base:
+        st.error("未找到预测结果目录 output/forecast/，请先运行 python/gmv_forecast.py 生成")
+        return None
+    try:
+        fday = pd.read_csv(os.path.join(base, "forecast_day.csv"), encoding="utf-8-sig")
+        hist = pd.read_csv(os.path.join(base, "series_history_day.csv"), encoding="utf-8-sig")
+        mpath = os.path.join(base, "metrics.json")
+        metrics = json.load(open(mpath, encoding="utf-8")) if os.path.exists(mpath) else {}
+    except Exception as e:
+        st.error(f"读取预测结果失败：{e}")
+        return None
+
+    fday.columns = ["order_date", "gmv_pred"]
+    hist.columns = ["order_date", "gmv", "order_cnt", "user_cnt"]
+
+    # 模型评估表（三模型对比，按 MAE 选优）
+    if metrics.get("metrics"):
+        rows = []
+        for name, m in metrics["metrics"].items():
+            rows.append({"模型": name, "MAE(元)": round(m["MAE"], 2),
+                         "RMSE(元)": round(m["RMSE"], 2), "MAPE": f"{m['MAPE(%)']}%"})
+        best = metrics.get("best_model", "均值基线")
+        best_mae = metrics["metrics"][best]["MAE"]
+        st.markdown("**模型评估（留出验证：最后 14 天）：**")
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.caption(f"按 MAE 选优：{best}（MAE {best_mae:,.2f} 元）——日 GMV 围绕均值宽幅波动、无显著趋势，复杂模型反而拟合噪声")
+
+    # 预测明细表
+    st.markdown("**未来 7 天日粒度 GMV 预测：**")
+    show = fday.copy()
+    show["gmv_pred"] = show["gmv_pred"].round(2)
+    st.dataframe(show, use_container_width=True, hide_index=True)
+
+    # 历史末段 + 预测拼接折线（ECharts 双序列，预测段虚线）
+    h = hist.tail(30)
+    x = h["order_date"].astype(str).tolist() + fday["order_date"].astype(str).tolist()
+    y_hist = h["gmv"].round(2).tolist() + [None] * len(fday)
+    y_pred = [None] * (len(h) - 1) + [h["gmv"].iloc[-1].round(2)] + fday["gmv_pred"].round(2).tolist()
+    js = _echarts_js()
+    if js:
+        cid = f"fc_{abs(hash(tuple(x))) % 99999}"
+        html = f"""
+        <div id="{cid}" style="width:100%;height:380px;"></div>
+        <script>{js}</script>
+        <script>
+        const chart = echarts.init(document.getElementById('{cid}'), null, {{renderer:'canvas'}});
+        chart.setOption({{
+          backgroundColor: 'transparent',
+          tooltip: {{ trigger: 'axis' }},
+          legend: {{ data: ['历史日GMV', '预测日GMV'], textStyle: {{ color: '#cfe6ff' }}, top: 0 }},
+          grid: {{ left: 70, right: 40, top: 40, bottom: 60 }},
+          xAxis: {{ type:'category', data:{json.dumps(x)},
+            axisLabel:{{ color:'#7fa3d9', rotate:30, fontSize:11 }},
+            axisLine:{{ lineStyle:{{ color:'#2a4a80' }} }} }},
+          yAxis: {{ type:'value', axisLabel:{{ color:'#7fa3d9' }},
+            splitLine:{{ lineStyle:{{ color:'rgba(42,74,128,.35)', type:'dashed' }} }} }},
+          series: [
+            {{ type:'line', name:'历史日GMV', data:{json.dumps(y_hist)}, smooth:true,
+               symbol:'none', connectNulls:false,
+               lineStyle:{{ width:2.5, color:'#00e5ff' }}, itemStyle:{{ color:'#00e5ff' }},
+               areaStyle:{{ color:'rgba(0,229,255,.18)' }} }},
+            {{ type:'line', name:'预测日GMV', data:{json.dumps(y_pred)}, smooth:true,
+               symbol:'circle', symbolSize:6, connectNulls:false,
+               lineStyle:{{ width:2.5, type:'dashed', color:'#ffb74d' }}, itemStyle:{{ color:'#ffb74d' }} }}
+          ]
+        }});
+        window.addEventListener('resize', () => chart.resize());
+        </script>"""
+        st.components.v1.html(html, height=390)
+    else:
+        st.line_chart(show.set_index("order_date"))
+
+    st.caption("口径说明：预测数据源为 dws.dws_sales_day（有效订单），GMV 合计与 ADS 层 KPI 逐位一致；"
+               "预测值由 python/gmv_forecast.py 离线产出，问答页读取其结果进行可视化")
+    return show.rename(columns={"gmv_pred": "预测GMV"})
 
 with st.sidebar:
     st.header("💡 示例问题")
@@ -138,11 +242,12 @@ def render_chart(df: pd.DataFrame):
 
     js = _echarts_js()
     if js:
+        cid = f"c_{abs(hash(tuple(x))) % 99999}"
         html = f"""
-        <div id="c_{abs(hash(tuple(x))) % 99999}" style="width:100%;height:380px;"></div>
+        <div id="{cid}" style="width:100%;height:380px;"></div>
         <script>{js}</script>
         <script>
-        const chart = echarts.init(document.currentScript.previousElementSibling, null, {{renderer:'canvas'}});
+        const chart = echarts.init(document.getElementById('{cid}'), null, {{renderer:'canvas'}});
         chart.setOption({{
           backgroundColor: 'transparent',
           tooltip: {{ trigger: 'axis' }},
@@ -172,36 +277,60 @@ question = _pending or st.text_input(
 # 只在「新问题」时执行：页面重跑时输入框残留的旧值不重复查询
 if question and (_pending or question != st.session_state.get("_last_run_q", "")):
     st.session_state._last_run_q = question
-    engine = st.session_state._nl2sql
-    if engine is None:
-        st.error("NL2SQL 初始化失败：" + st.session_state.get("_init_err", "未知错误")
-                 + "　请确认 Hive 服务已启动（docker compose up -d）")
-    else:
-        sql, df, err, mode_note = None, None, None, ""
-        try:
-            with st.spinner("🤔 正在生成 SQL 并执行 …"):
-                r = engine.ask(question, show_sql=False, do_exec=True)
-            sql = r.get("sql") or ""
-            err = r.get("error")
-            mode_note = f"链路：{r.get('mode')}　耗时：{r.get('elapsed')}s"
-            cols = r.get("columns") or []
-            rows = r.get("rows") or []
-            df = pd.DataFrame(rows, columns=cols) if rows else pd.DataFrame()
-        except Exception as e:
-            err = str(e)
+    result = {"sql": None, "df": None, "err": None, "note": "", "forecast": False}
 
-        if mode_note:
-            st.caption(mode_note)
-        if sql:
+    # 预测类问题：不走 NL2SQL，直接读第 3 周预测产物渲染
+    if is_forecast_question(question):
+        result["forecast"] = True
+        result["note"] = "预测问答：读取第 3 周 GMV 预测产物（python/gmv_forecast.py 产出）"
+        if _forecast_dir() is None:
+            result["err"] = "未找到预测结果目录 output/forecast/，请先运行 python/gmv_forecast.py"
+    else:
+        engine = st.session_state._nl2sql
+        if engine is None:
+            result["err"] = ("NL2SQL 初始化失败：" + st.session_state.get("_init_err", "未知错误")
+                             + "　请确认 Hive 服务已启动（docker compose up -d）")
+        else:
+            try:
+                with st.spinner("🤔 正在生成 SQL 并执行 …"):
+                    r = engine.ask(question, show_sql=False, do_exec=True)
+                result["sql"] = r.get("sql") or ""
+                result["err"] = r.get("error")
+                result["note"] = f"链路：{r.get('mode')}　耗时：{r.get('elapsed')}s"
+                cols = r.get("columns") or []
+                rows = r.get("rows") or []
+                result["df"] = pd.DataFrame(rows, columns=cols) if rows else pd.DataFrame()
+            except Exception as e:
+                result["err"] = str(e)
+
+    st.session_state.last_result = result
+    st.session_state.history.append(
+        (question, result["sql"] or ("（预测问答：读取 output/forecast 预测产物）" if result["forecast"] else ""),
+         result["df"], result["err"], None))
+    st.rerun()
+
+# ----------------------------------------------------------------------
+# 常驻展示最近一次问答结果（页面重跑后仍保留在主区域）
+# ----------------------------------------------------------------------
+_last = st.session_state.get("last_result")
+if _last and st.session_state.get("_last_run_q"):
+    if _last.get("note"):
+        st.caption(_last["note"])
+    if _last.get("forecast"):
+        if _last.get("err"):
+            st.error(_last["err"])
+        else:
+            render_forecast(st.session_state._last_run_q)
+    else:
+        if _last.get("sql"):
             st.markdown("**生成的 SQL：**")
-            st.code(sql, language="sql")
-        if err:
-            st.error("执行出错：" + str(err))
-        elif df is not None:
+            st.code(_last["sql"], language="sql")
+        if _last.get("err"):
+            st.error("执行出错：" + str(_last["err"]))
+        elif _last.get("df") is not None:
+            df = _last["df"]
             if df.empty:
                 st.warning("查询成功，但没有返回数据。")
             else:
                 st.markdown(f"**查询结果（{len(df)} 行）：**")
                 render_chart(df)
-        st.session_state.history.append((question, sql, df, err, None))
-        st.rerun()
